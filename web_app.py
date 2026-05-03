@@ -55,6 +55,8 @@ with tab1:
             with open(temp_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             process_and_display(temp_path)
+            if os.path.exists(temp_path):
+                os.remove(temp_path) # ลบไฟล์ทิ้งเพื่อประหยัดพื้นที่
 
 with tab2:
     camera_file = st.camera_input("📷 ถ่ายรูปป้ายทะเบียน")
@@ -63,3 +65,5 @@ with tab2:
         with open(temp_path, "wb") as f:
             f.write(camera_file.getbuffer())
         process_and_display(temp_path)
+        if os.path.exists(temp_path):
+            os.remove(temp_path) # ลบไฟล์ทิ้งเพื่อประหยัดพื้นที่

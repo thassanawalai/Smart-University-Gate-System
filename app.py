@@ -171,7 +171,7 @@ class LicensePlateApp:
 
         if os.path.exists(file_path):
             img = Image.open(file_path)
-            img = img.resize((200, 80))  # ปรับขนาดให้พอดีช่อง
+            img.thumbnail((300, 200))  # ย่อรูปแบบรักษาอัตราส่วนแทนการบีบภาพ
             self.crop_photo = ImageTk.PhotoImage(img)
             self.lbl_crop.config(image=self.crop_photo, text="")
             

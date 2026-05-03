@@ -1,9 +1,15 @@
 # Python
+# Python cache
 __pycache__/
 *.pyc
 
 # Virtual Environments
 venv/
+# Temporary images and folders
+cropped_plates/
+temp_*.jpg
 
 # Temp images folder from project
 cropped_plates/
+# Environment variables (if used in the future)
+.env
