@@ -5,8 +5,6 @@ import cv2
 import os
 import threading
 import shutil
-
-# Import ไฟล์เพื่อนๆ ของเรา
 import detect
 import my_ocr
 import database_manager
@@ -33,15 +31,18 @@ class LicensePlateApp:
         main_frame = tk.Frame(root, bg="#f0f0f0")
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # === ฝั่งซ้าย: แสดงรูปภาพ ===
-        left_frame = tk.Frame(main_frame, bg="white", bd=2, relief="groove")
-        left_frame.pack(side="left", fill="both", expand=True, padx=5)
+        # === ฝั่งซ้าย: โหมดการทำงาน (Tabs) ===
+        self.notebook = ttk.Notebook(main_frame)
+        self.notebook.pack(side="left", fill="both", expand=True, padx=5)
 
-        self.lbl_image = tk.Label(left_frame, text="กรุณาเลือกรูปภาพ", bg="#eeeeee")
+        # -- Tab 1: โหมดรูปภาพ --
+        tab_image = tk.Frame(self.notebook, bg="white")
+        self.notebook.add(tab_image, text="📂 โหมดอัปโหลดรูปภาพ")
+
+        self.lbl_image = tk.Label(tab_image, text="กรุณาเลือกรูปภาพ", bg="#eeeeee")
         self.lbl_image.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # ปุ่มควบคุมฝั่งซ้าย
-        btn_frame = tk.Frame(left_frame, bg="white")
+        btn_frame = tk.Frame(tab_image, bg="white")
         btn_frame.pack(fill="x", pady=5)
 
         btn_select = tk.Button(btn_frame, text="📂 เลือกรูปภาพ", command=self.select_image,
@@ -51,6 +52,20 @@ class LicensePlateApp:
         btn_process = tk.Button(btn_frame, text="🔍 ตรวจสอบทะเบียน", command=self.process_image,
                                 bg="#e74c3c", fg="white", font=("Arial", 12), width=15)
         btn_process.pack(side="right", padx=10)
+        
+        # -- Tab 2: โหมดเปิดกล้อง (WebRTC) --
+        tab_camera = tk.Frame(self.notebook, bg="white")
+        self.notebook.add(tab_camera, text="📷 โหมดเปิดกล้อง (WebRTC)")
+        
+        tk.Label(tab_camera, text="ระบบจะเปิดหน้าต่างกล้องใหม่ขึ้นมาสแกนอัตโนมัติ", 
+                 font=("Arial", 12), bg="white").pack(pady=40)
+                 
+        btn_start_cam = tk.Button(tab_camera, text="🟢 เริ่มสแกนจากกล้อง", command=self.start_camera,
+                                bg="#34495e", fg="white", font=("Arial", 14, "bold"))
+        btn_start_cam.pack(pady=10)
+        
+        self.lbl_cam_status = tk.Label(tab_camera, text="สถานะ: รอการทำงาน", fg="gray", bg="white", font=("Arial", 10))
+        self.lbl_cam_status.pack(pady=10)
 
         # === ฝั่งขวา: ตารางผลลัพธ์ ===
         right_frame = tk.Frame(main_frame, bg="white", bd=2, relief="groove", width=350)
@@ -108,29 +123,24 @@ class LicensePlateApp:
 
     def run_process_task(self, image_path):
         """ ฟังก์ชันนี้จะทำงานอยู่เบื้องหลัง (Background Thread) """
-        # 1. ล้างโฟลเดอร์ temp เก่า
-        if os.path.exists('cropped_plates'):
-            shutil.rmtree('cropped_plates')
-
-        # 2. เรียกใช้ detect.py
-        success = detect.detect_and_crop(image_path)
-
-        if not success:
-            # ถ้ามี Error ให้ส่งกลับไปแจ้งเตือนใน Main Thread
-            self.root.after(0, self.finish_process_task, False, [], "ไม่พบป้ายทะเบียน หรือเกิดข้อผิดพลาดในการ Detect")
+        # ใช้ Workflow ตัวใหม่แทนการเรียก detect_and_crop
+        result = detect.detect_new_workflow_image(image_path)
+        
+        if not result:
+            self.root.after(0, self.finish_process_task, False, [], "เกิดข้อผิดพลาดในการเชื่อมต่อ Workflow")
             return
-
-        # 3. เรียกใช้ OCR
-        data_list = my_ocr.read_plates_in_folder()
+            
+        plates = detect.extract_plate_texts(result)
+        if not plates:
+            self.root.after(0, self.finish_process_task, False, [], "ไม่พบข้อความทะเบียนในรูปภาพ")
+            return
 
         # เตรียมข้อมูลส่งกลับไป Main Thread
         final_data = []
-        for data in data_list:
-            plate_text = data['text']
-            file_path = data['file']
+        for plate_text in plates:
             # เช็ค Database
             status, owner = database_manager.check_license_plate(plate_text)
-            final_data.append((plate_text, owner, status, file_path))
+            final_data.append((plate_text, owner, status, image_path))
             
         # ส่งผลลัพธ์กลับไปให้ Main Thread เพื่ออัปเดต UI
         self.root.after(0, self.finish_process_task, True, final_data, "")
@@ -164,6 +174,30 @@ class LicensePlateApp:
             img = img.resize((200, 80))  # ปรับขนาดให้พอดีช่อง
             self.crop_photo = ImageTk.PhotoImage(img)
             self.lbl_crop.config(image=self.crop_photo, text="")
+            
+    def start_camera(self):
+        self.lbl_cam_status.config(text="สถานะ: กำลังสแกนจากกล้อง... (กรุณาดูหน้าต่างใหม่ที่เด้งขึ้นมา)", fg="green")
+        thread = threading.Thread(target=self.run_camera_task)
+        thread.daemon = True
+        thread.start()
+        
+    def run_camera_task(self):
+        def on_plate(data):
+            # เมื่อกล้องสแกนเจอข้อมูล จะดึงข้อความทะเบียนมาเช็คและใส่ตาราง
+            plates = detect.extract_plate_texts(data)
+            for plate_text in plates:
+                if plate_text:
+                    self.root.after(0, self.add_plate_to_table, plate_text)
+                    
+        detect.start_webrtc_camera(on_plate)
+        self.root.after(0, lambda: self.lbl_cam_status.config(text="สถานะ: หยุดการทำงาน", fg="gray"))
+
+    def add_plate_to_table(self, plate_text):
+        # เช็คก่อนว่าทะเบียนนี้โชว์ในตารางแล้วหรือยัง (ป้องกันแสดงซ้ำรัวๆ)
+        for child in self.tree.get_children():
+            if self.tree.item(child)["values"][0] == plate_text: return
+        status, owner = database_manager.check_license_plate(plate_text)
+        self.tree.insert("", "end", values=(plate_text, owner, status), tags=("",))
 
 
 if __name__ == "__main__":

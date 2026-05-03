@@ -1,6 +1,8 @@
 import cv2
 import os
 from roboflow import Roboflow
+from inference_sdk import InferenceHTTPClient
+from inference_sdk.webrtc import WebcamSource, StreamConfig, VideoMetadata
 
 # --- ตั้งค่า API (ใช้ Key ของคุณเอง) ---
 API_KEY = "DkIoL2AV2ihaoXDF6XT2"
@@ -59,3 +61,78 @@ def detect_and_crop(image_path, output_folder='cropped_plates'):
         count += 1
 
     return True
+
+# ====================================================
+# NEW WORKFLOW (Inference SDK) สำหรับโหมดใหม่
+# ====================================================
+
+def detect_new_workflow_image(image_path):
+    """โหมดที่ 1: ตรวจจับจากรูปภาพ (อ้างอิงจาก Roboflow.py)"""
+    client = InferenceHTTPClient(api_url="https://serverless.roboflow.com", api_key=API_KEY)
+    try:
+        result = client.run_workflow(
+            workspace_name="thassanawalai",
+            workflow_id="license-plate-text-reader-1777740758005",
+            images={"image": image_path},
+            use_cache=True
+        )
+        return result
+    except Exception as e:
+        print(f"Workflow Image Error: {e}")
+        return None
+
+def start_webrtc_camera(on_plate_callback):
+    """โหมดที่ 2: เปิดกล้องสด (อ้างอิงจาก Roboflow2.py)"""
+    client = InferenceHTTPClient(api_url="https://serverless.roboflow.com", api_key=API_KEY)
+    source = WebcamSource(resolution=(1280, 720))
+    config = StreamConfig(
+        stream_output=["annotated_image"],
+        data_output=["plate_text", "plate_predictions"],
+        processing_timeout=3600,
+        requested_plan="webrtc-gpu-medium",
+        requested_region="us"
+    )
+    
+    session = client.webrtc.stream(
+        source=source, workflow="license-plate-text-reader-1777740758005",
+        workspace="thassanawalai", image_input="image", config=config
+    )
+
+    @session.on_frame
+    def show_frame(frame, metadata):
+        cv2.imshow("Live Plate Scanner (Press 'q' to stop)", frame)
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            session.close()
+
+    @session.on_data
+    def on_data(data: dict, metadata: VideoMetadata):
+        # เมื่อพบข้อมูลให้ส่งเข้า Callback ทันที
+        on_plate_callback(data)
+
+    print("Starting WebRTC Camera...")
+    session.run()
+    cv2.destroyAllWindows()
+
+def extract_plate_texts(result):
+    """ดึงข้อความทะเบียนจากผลลัพธ์ของ Workflow อย่างปลอดภัย"""
+    plates = []
+    if not result: return plates
+    
+    data = result[0] if isinstance(result, list) and result else (result if not isinstance(result, list) else {})
+        
+    if "plate_text" in data:
+        pt = data["plate_text"]
+        if isinstance(pt, str): plates.append(pt)
+        elif isinstance(pt, list): plates.extend([str(x) for x in pt])
+        
+    if not plates and "plate_predictions" in data:
+        preds = data["plate_predictions"]
+        if isinstance(preds, list):
+            for p in preds:
+                if isinstance(p, dict):
+                    if "class_name" in p: plates.append(p["class_name"])
+                    elif "class" in p: plates.append(p["class"])
+                    elif "text" in p: plates.append(p["text"])
+                    
+    # ทำความสะอาดข้อมูล: ตัดช่องว่างและคืนค่าเฉพาะที่ไม่ซ้ำกัน
+    return list(set([str(p).replace(" ", "").strip() for p in plates if p]))
