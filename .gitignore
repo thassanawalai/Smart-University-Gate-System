@@ -1,0 +1,9 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual Environments
+venv/
+
+# Temp images folder from project
+cropped_plates/
